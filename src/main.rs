@@ -10,6 +10,7 @@ use alloc::rc::Rc;
 use alloc::vec;
 use alloc::vec::Vec;
 use crate::interrupts::init_idt;
+use crate::vmm::Vmm;
 
 mod serial;
 mod interrupts;
@@ -39,12 +40,11 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
     serial_println!(" [ok]");
 
     serial_print!("Initializing PMM and VMM...");
-    let mut pmm = unsafe { pmm::BootInfoFrameAllocator::init(&boot_info.memory_regions) };
-    let mut vmm = unsafe { vmm::init(boot_info.recursive_index.into_option().expect("No recursive index")) };
+    let mut vmm = unsafe { Vmm::init(boot_info.recursive_index.into_option().expect("No recursive index"), pmm::BootInfoFrameAllocator::init(&boot_info.memory_regions)) };
     serial_println!(" [ok]");
 
     serial_print!("Initializing heap...");
-    allocator::init(&mut pmm, &mut vmm).expect("Heap initialization failed");
+    allocator::init(&mut vmm).expect("Heap initialization failed");
     serial_println!(" [ok]");
 
 

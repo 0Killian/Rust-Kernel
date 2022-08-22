@@ -2,6 +2,7 @@ use linked_list_allocator::LockedHeap;
 use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB};
 use x86_64::structures::paging::mapper::MapToError;
 use x86_64::VirtAddr;
+use crate::vmm::Vmm;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 pub const HEAP_SIZE: usize = 1 << 20; // 1MiB
@@ -9,7 +10,7 @@ pub const HEAP_SIZE: usize = 1 << 20; // 1MiB
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
-pub fn init(pmm: &mut impl FrameAllocator<Size4KiB>, vmm: &mut impl Mapper<Size4KiB>) -> Result<(), MapToError<Size4KiB>>
+pub fn init(vmm: &mut Vmm) -> Result<(), MapToError<Size4KiB>>
 {
     let page_range = {
         let heap_start = VirtAddr::new(HEAP_START as u64);
@@ -21,9 +22,8 @@ pub fn init(pmm: &mut impl FrameAllocator<Size4KiB>, vmm: &mut impl Mapper<Size4
 
     for page in page_range
     {
-        let frame = pmm.allocate_frame().ok_or(MapToError::FrameAllocationFailed)?;
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-        unsafe { vmm.map_to(page, frame, flags, pmm)?.flush() };
+        unsafe { vmm.map(page, flags)?.flush() };
     }
 
     unsafe {
