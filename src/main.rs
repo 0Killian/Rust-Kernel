@@ -1,11 +1,21 @@
 #![feature(abi_x86_interrupt)]
 #![no_std]
 #![no_main]
+#![feature(alloc_error_handler)]
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::rc::Rc;
+use alloc::vec;
+use alloc::vec::Vec;
 use crate::interrupts::init_idt;
 
 mod serial;
 mod interrupts;
+mod vmm;
+mod pmm;
+mod allocator;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> !
@@ -28,7 +38,15 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
     init_idt();
     serial_println!(" [ok]");
 
-    x86_64::instructions::interrupts::int3();
+    serial_print!("Initializing PMM and VMM...");
+    let mut pmm = unsafe { pmm::BootInfoFrameAllocator::init(&boot_info.memory_regions) };
+    let mut vmm = unsafe { vmm::init(boot_info.recursive_index.into_option().expect("No recursive index")) };
+    serial_println!(" [ok]");
+
+    serial_print!("Initializing heap...");
+    allocator::init(&mut pmm, &mut vmm).expect("Heap initialization failed");
+    serial_println!(" [ok]");
+
 
     loop {}
 }

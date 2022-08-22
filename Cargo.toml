@@ -10,7 +10,11 @@ bootloader = "0.10.12"
 x86_64 = "0.14.10"
 uart_16550 = "0.2.18"
 spin = "0.9.4"
+linked_list_allocator = "0.10.1"
 
 [dependencies.lazy_static]
 version = "1.4.0"
 features = ["spin_no_std"]
+
+[package.metadata.bootloader]
+map-page-table-recursively = true
