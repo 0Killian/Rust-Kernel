@@ -7,6 +7,7 @@ extern crate alloc;
 
 use core::ops::Deref;
 use core::ptr::NonNull;
+use log::error;
 use crate::interrupts::init_idt;
 use crate::vmm::VMM;
 use crate::logger::SERIAL_LOGGER;
@@ -22,7 +23,7 @@ mod logger;
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> !
 {
-    serial_println!("{}", _info);
+    error!("{}", _info);
     loop {}
 }
 
@@ -58,20 +59,13 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
         framebuffer.buffer_mut().fill(0x90);
     }
 
-    serial_println!("Hello from kernel!");
-    serial_print!("Initializing IDT...");
-    init_idt();
-    serial_println!(" [ok]");
-
-    serial_print!("Initializing heap...");
-    allocator::init().expect("Heap initialization failed");
-    serial_println!(" [ok]");
-
     log::set_logger(&SERIAL_LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).expect("Failed to set logger");
 
-    serial_print!("Initializing ACPI...");
+    init_idt();
+
+    allocator::init().expect("Heap initialization failed");
+
     unsafe { acpi_handler::init(); }
-    serial_println!(" [ok]");
 
     loop {}
 }
