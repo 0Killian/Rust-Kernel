@@ -16,6 +16,7 @@ mod interrupts;
 mod vmm;
 mod pmm;
 mod allocator;
+mod acpi_handler;
 mod logger;
 
 #[panic_handler]
@@ -67,6 +68,10 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
     serial_println!(" [ok]");
 
     log::set_logger(&SERIAL_LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).expect("Failed to set logger");
+
+    serial_print!("Initializing ACPI...");
+    unsafe { acpi_handler::init(); }
+    serial_println!(" [ok]");
 
     loop {}
 }
