@@ -1,15 +1,15 @@
-use x86_64::{
-    structures::paging::PageTable,
-    VirtAddr,
-};
+use core::ops::DerefMut;
+use x86_64::{structures::paging::PageTable, VirtAddr};
 use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, RecursivePageTable, Size4KiB};
-use x86_64::structures::paging::mapper::{MapperFlush, MapToError};
-use crate::pmm::BootInfoFrameAllocator;
+use x86_64::structures::paging::mapper::{MapperFlush, MapToError, UnmapError};
+use crate::pmm::PMM;
+use lazy_static::lazy_static;
+use spin::Mutex;
+use crate::BOOT_INFO;
 
 pub struct Vmm
 {
-    pmm: BootInfoFrameAllocator,
-    mapper: RecursivePageTable<'static>,
+    mapper: RecursivePageTable<'static>
 }
 
 impl Vmm
@@ -26,11 +26,10 @@ impl Vmm
         level_4_table
     }
 
-    pub unsafe fn init(recursive_index: u16, pmm: BootInfoFrameAllocator) -> Vmm
+    pub unsafe fn new() -> Vmm
     {
-        let level_4_table = Self::active_level_4_table(recursive_index);
+        let level_4_table = Self::active_level_4_table(BOOT_INFO.recursive_index.into_option().unwrap());
         Vmm {
-            pmm,
             mapper: RecursivePageTable::new(level_4_table).expect("Failed to create recursive page table")
         }
     }
@@ -41,13 +40,23 @@ impl Vmm
                                 flags: PageTableFlags,
     ) -> Result<MapperFlush<Size4KiB>, MapToError<Size4KiB>>
     {
-        self.mapper.map_to(page, frame, flags, &mut self.pmm)
+        self.mapper.map_to(page, frame, flags, PMM.lock().deref_mut())
+    }
+
+    #[inline]
+    pub unsafe fn unmap(&mut self, page: Page) -> Result<(PhysFrame<Size4KiB>, MapperFlush<Size4KiB>), UnmapError>
+    {
+        self.mapper.unmap(page)
     }
 
     #[inline]
     pub unsafe fn map(&mut self, page: Page<Size4KiB>, flags: PageTableFlags) -> Result<MapperFlush<Size4KiB>, MapToError<Size4KiB>>
     {
-        let frame = self.pmm.allocate_frame().ok_or(MapToError::FrameAllocationFailed)?;
-        self.mapper.map_to(page, frame, flags, &mut self.pmm)
+        let frame = PMM.lock().allocate_frame().ok_or(MapToError::FrameAllocationFailed)?;
+        self.mapper.map_to(page, frame, flags, PMM.lock().deref_mut())
     }
+}
+
+lazy_static! {
+    pub static ref VMM: Mutex<Vmm> = unsafe { Mutex::new(Vmm::new()) };
 }

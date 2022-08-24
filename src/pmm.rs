@@ -1,21 +1,26 @@
-use bootloader::boot_info::{MemoryRegionKind, MemoryRegions};
+use bootloader::boot_info::{MemoryRegion, MemoryRegionKind};
+use lazy_static::lazy_static;
 use x86_64::PhysAddr;
 use x86_64::structures::paging::{FrameAllocator, PhysFrame, Size4KiB};
+use crate::BOOT_INFO;
+use spin::Mutex;
 
 pub struct BootInfoFrameAllocator {
-    memory_regions: &'static MemoryRegions,
+    memory_regions: &'static [MemoryRegion],
     next: usize,
 }
 
+unsafe impl Send for BootInfoFrameAllocator {}
+
 impl BootInfoFrameAllocator {
-    pub unsafe fn init(memory_regions: &'static MemoryRegions) -> Self {
+    pub unsafe fn new() -> Self {
         BootInfoFrameAllocator {
-            memory_regions,
+            memory_regions: core::slice::from_raw_parts(BOOT_INFO.memory_regions.as_ptr(), BOOT_INFO.memory_regions.len()),
             next: 0,
         }
     }
 
-    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame>
+    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> + '_
     {
         let regions = self.memory_regions.iter();
         let usable_regions = regions.filter(|r| r.kind == MemoryRegionKind::Usable);
@@ -32,4 +37,8 @@ unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
         self.next += 1;
         frame
     }
+}
+
+lazy_static! {
+    pub static ref PMM: Mutex<BootInfoFrameAllocator> = unsafe { Mutex::new(BootInfoFrameAllocator::new()) };
 }

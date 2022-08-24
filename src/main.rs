@@ -5,18 +5,18 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-use alloc::rc::Rc;
-use alloc::vec;
-use alloc::vec::Vec;
+use core::ops::Deref;
+use core::ptr::NonNull;
 use crate::interrupts::init_idt;
-use crate::vmm::Vmm;
+use crate::vmm::VMM;
+use crate::logger::SERIAL_LOGGER;
 
 mod serial;
 mod interrupts;
 mod vmm;
 mod pmm;
 mod allocator;
+mod logger;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> !
@@ -27,8 +27,31 @@ fn panic(_info: &core::panic::PanicInfo) -> !
 
 bootloader::entry_point!(kernel_main);
 
+#[derive(Clone)]
+struct BootInfoRef
+{
+    pub boot_info_ptr: *mut bootloader::BootInfo,
+}
+
+impl Copy for BootInfoRef {}
+
+impl Deref for BootInfoRef
+{
+    type Target = bootloader::BootInfo;
+
+    fn deref(&self) -> &Self::Target
+    {
+        unsafe { NonNull::new(self.boot_info_ptr).unwrap().as_ref() }
+    }
+}
+
+static mut BOOT_INFO: BootInfoRef = BootInfoRef {
+    boot_info_ptr: core::ptr::null::<bootloader::BootInfo>() as *mut bootloader::BootInfo,
+};
+
 fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
 {
+    unsafe { BOOT_INFO.boot_info_ptr = boot_info as *mut bootloader::BootInfo };
     if let Some(framebuffer) = boot_info.framebuffer.as_mut()
     {
         framebuffer.buffer_mut().fill(0x90);
@@ -39,14 +62,11 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
     init_idt();
     serial_println!(" [ok]");
 
-    serial_print!("Initializing PMM and VMM...");
-    let mut vmm = unsafe { Vmm::init(boot_info.recursive_index.into_option().expect("No recursive index"), pmm::BootInfoFrameAllocator::init(&boot_info.memory_regions)) };
-    serial_println!(" [ok]");
-
     serial_print!("Initializing heap...");
-    allocator::init(&mut vmm).expect("Heap initialization failed");
+    allocator::init().expect("Heap initialization failed");
     serial_println!(" [ok]");
 
+    log::set_logger(&SERIAL_LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace)).expect("Failed to set logger");
 
     loop {}
 }
