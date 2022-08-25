@@ -1,11 +1,9 @@
-use core::fmt::Error;
 use core::ops::DerefMut;
 use x86_64::{PhysAddr, structures::paging::PageTable, VirtAddr};
 use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, RecursivePageTable, Size4KiB, Translate};
 use x86_64::structures::paging::mapper::{MapperFlush, MapToError, UnmapError};
 use crate::pmm::PMM;
 use lazy_static::lazy_static;
-use log::trace;
 use spin::Mutex;
 use x86_64::structures::paging::page::PageRangeInclusive;
 use crate::BOOT_INFO;
@@ -61,6 +59,7 @@ impl Vmm
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub unsafe fn map_to(&mut self, page: Page<Size4KiB>,
                                 frame: PhysFrame<Size4KiB>,
                                 flags: PageTableFlags,
@@ -70,6 +69,7 @@ impl Vmm
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub unsafe fn unmap(&mut self, page: Page) -> Result<(PhysFrame<Size4KiB>, MapperFlush<Size4KiB>), UnmapError>
     {
         self.mapper.unmap(page)
@@ -110,9 +110,9 @@ impl Vmm
             virt_addr_aligned + size + virt_offset - 1u64
         );
 
-        for page in page_range {
+        for (i, page) in page_range.enumerate() {
             unsafe {
-                self.mapper.map_to(page, PhysFrame::containing_address(phys_addr_aligned + phys_offset), flags, PMM.lock().deref_mut())?.flush();
+                self.mapper.map_to(page, PhysFrame::containing_address(phys_addr_aligned + i as u64 * 0x1000 + phys_offset), flags, PMM.lock().deref_mut())?.flush();
             }
         }
 
@@ -130,9 +130,7 @@ impl Vmm
         );
 
         for page in page_range {
-            unsafe {
-                self.mapper.unmap(page)?;
-            }
+            self.mapper.unmap(page)?.1.flush();
         }
 
         Ok(())
@@ -162,7 +160,7 @@ impl Vmm
                 }
                 else
                 {
-                    self.mapper.unmap(Page::<Size4KiB>::containing_address(virt_addr_aligned + i * 0x1000))?;
+                    self.mapper.unmap(Page::<Size4KiB>::containing_address(virt_addr_aligned + i * 0x1000))?.1.flush();
                 }
             }
             unsafe {

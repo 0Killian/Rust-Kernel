@@ -2,13 +2,14 @@
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
+#![feature(new_uninit)]
 
 extern crate alloc;
 
 use core::ops::Deref;
 use core::ptr::NonNull;
 use log::{error, info};
-use crate::acpi_handler::ACPI;
+use crate::acpi::ACPI;
 use crate::interrupts::init_idt;
 use crate::vmm::VMM;
 use crate::logger::SERIAL_LOGGER;
@@ -18,9 +19,10 @@ mod interrupts;
 mod vmm;
 mod pmm;
 mod allocator;
-mod acpi_handler;
 mod logger;
 mod pci;
+mod acpi;
+mod device;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> !
@@ -71,8 +73,13 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
 
     let mut acpi = unsafe { ACPI::new() };
 
-    acpi.init_pci();
-    acpi.load_drivers();
+    let devices = acpi.enumerate_devices();
+
+    info!("Found {} devices :", devices.len());
+    for device in devices.iter()
+    {
+        info!("{}", device);
+    }
 
     info!("Kernel initialized");
 
