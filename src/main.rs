@@ -7,7 +7,8 @@ extern crate alloc;
 
 use core::ops::Deref;
 use core::ptr::NonNull;
-use log::error;
+use log::{error, info};
+use crate::acpi_handler::ACPI;
 use crate::interrupts::init_idt;
 use crate::vmm::VMM;
 use crate::logger::SERIAL_LOGGER;
@@ -19,6 +20,7 @@ mod pmm;
 mod allocator;
 mod acpi_handler;
 mod logger;
+mod pci;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> !
@@ -63,9 +65,16 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
 
     init_idt();
 
+    x86_64::instructions::interrupts::int3();
+
     allocator::init().expect("Heap initialization failed");
 
-    unsafe { acpi_handler::init(); }
+    let mut acpi = unsafe { ACPI::new() };
+
+    acpi.init_pci();
+    acpi.load_drivers();
+
+    info!("Kernel initialized");
 
     loop {}
 }

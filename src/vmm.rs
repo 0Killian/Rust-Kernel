@@ -1,15 +1,41 @@
+use core::fmt::Error;
 use core::ops::DerefMut;
-use x86_64::{structures::paging::PageTable, VirtAddr};
-use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, RecursivePageTable, Size4KiB};
+use x86_64::{PhysAddr, structures::paging::PageTable, VirtAddr};
+use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, RecursivePageTable, Size4KiB, Translate};
 use x86_64::structures::paging::mapper::{MapperFlush, MapToError, UnmapError};
 use crate::pmm::PMM;
 use lazy_static::lazy_static;
+use log::trace;
 use spin::Mutex;
+use x86_64::structures::paging::page::PageRangeInclusive;
 use crate::BOOT_INFO;
 
 pub struct Vmm
 {
     mapper: RecursivePageTable<'static>
+}
+
+#[derive(Debug)]
+pub enum MappingError
+{
+    MapToError(MapToError<Size4KiB>),
+    UnmapError(UnmapError),
+}
+
+impl From<MapToError<Size4KiB>> for MappingError
+{
+    fn from(error: MapToError<Size4KiB>) -> Self
+    {
+        MappingError::MapToError(error)
+    }
+}
+
+impl From<UnmapError> for MappingError
+{
+    fn from(error: UnmapError) -> Self
+    {
+        MappingError::UnmapError(error)
+    }
 }
 
 impl Vmm
@@ -54,6 +80,97 @@ impl Vmm
     {
         let frame = PMM.lock().allocate_frame().ok_or(MapToError::FrameAllocationFailed)?;
         self.mapper.map_to(page, frame, flags, PMM.lock().deref_mut())
+    }
+
+    #[inline]
+    pub fn translate_addr(&self, addr: VirtAddr) -> Option<PhysAddr>
+    {
+        self.mapper.translate_addr(addr)
+    }
+
+    fn range_inclusive(start: VirtAddr, end: VirtAddr) -> PageRangeInclusive<Size4KiB>
+    {
+        let page_start = Page::containing_address(start);
+        let page_end = Page::containing_address(end);
+        Page::range_inclusive(page_start, page_end)
+    }
+
+    pub fn map_region(&mut self, phys_addr: PhysAddr, virt_addr: VirtAddr, size: u64, flags: PageTableFlags) -> Result<(), MapToError<Size4KiB>>
+    {
+        let phys_addr_aligned = phys_addr.align_down(0x1000 as u64);
+        let virt_addr_aligned = virt_addr.align_down(0x1000 as u64);
+
+        let phys_offset = phys_addr.as_u64() % 0x1000;
+        let virt_offset = virt_addr.as_u64() % 0x1000;
+
+        assert_eq!(phys_offset, virt_offset, "Physical and virtual addresses' offset from nearest page boundary must be equal");
+
+        let page_range = Self::range_inclusive(
+            virt_addr_aligned,
+            virt_addr_aligned + size + virt_offset - 1u64
+        );
+
+        for page in page_range {
+            unsafe {
+                self.mapper.map_to(page, PhysFrame::containing_address(phys_addr_aligned + phys_offset), flags, PMM.lock().deref_mut())?.flush();
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn unmap_region(&mut self, virt_addr: VirtAddr, size: u64) -> Result<(), UnmapError>
+    {
+        let virt_addr_aligned = virt_addr.align_down(0x1000 as u64);
+        let virt_offset = virt_addr.as_u64() % 0x1000;
+
+        let page_range = Self::range_inclusive(
+            virt_addr_aligned,
+            virt_addr_aligned + size + virt_offset - 1u64
+        );
+
+        for page in page_range {
+            unsafe {
+                self.mapper.unmap(page)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn remap_region(&mut self, phys_addr: PhysAddr, virt_addr: VirtAddr, size: u64, flags: PageTableFlags) -> Result<(), MappingError>
+    {
+        let phys_addr_aligned = phys_addr.align_down(0x1000 as u64);
+        let virt_addr_aligned = virt_addr.align_down(0x1000 as u64);
+
+        let phys_offset = phys_addr.as_u64() - phys_addr_aligned.as_u64();
+        let virt_offset = virt_addr.as_u64() - virt_addr_aligned.as_u64();
+
+        assert_eq!(phys_offset, virt_offset, "Physical and virtual addresses' offset from nearest page boundary must be equal");
+
+        let page_range = Self::range_inclusive(
+            virt_addr_aligned,
+            virt_addr_aligned + size + virt_offset - 1u64
+        );
+
+        for (i , page) in page_range.enumerate() {
+            if let Some(phys) = self.translate_addr(page.start_address())
+            {
+                if phys == phys_addr_aligned + i * 0x1000
+                {
+                    continue;
+                }
+                else
+                {
+                    self.mapper.unmap(Page::<Size4KiB>::containing_address(virt_addr_aligned + i * 0x1000))?;
+                }
+            }
+            unsafe {
+                self.mapper.map_to(page, PhysFrame::containing_address(phys_addr_aligned + i as u64 * 0x1000), flags, PMM.lock().deref_mut())?.flush();
+            }
+        }
+
+        Ok(())
     }
 }
 
