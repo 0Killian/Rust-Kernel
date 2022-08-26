@@ -1,9 +1,13 @@
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use core::fmt::{Display, Formatter};
-use pci_types::{BaseClass, DeviceId, Interface, PciAddress, PciHeader, SubClass, VendorId};
+use log::error;
+use pci_types::{Bar, BaseClass, DeviceId, EndpointHeader, Interface, PciAddress, PciHeader, SubClass, VendorId};
 use pci_types::device_type::DeviceType;
-use crate::pci::PciHandler;
+use crate::drivers;
+use crate::drivers::Driver;
+use crate::pci::{PCI_HANDLER, PciDriver, PciHandler};
 
 #[derive(Debug, Clone)]
 pub struct PciDevice
@@ -79,6 +83,27 @@ impl PciDevice
             (DeviceType::IsaBridge, _) => format!("{:?}", DeviceType::IsaBridge),
             (DeviceType::SmBusController, _) => format!("{:?}", DeviceType::SmBusController),
             _ => "".to_string()
+        }
+    }
+
+    pub fn get_bar(&self, bar: u8) -> Option<Bar>
+    {
+        EndpointHeader::from_header(PciHeader::new(self.address), PCI_HANDLER.lock().as_ref().unwrap()).unwrap().bar(bar, PCI_HANDLER.lock().as_ref().unwrap())
+    }
+
+    pub fn find_driver(&self) -> Option<Driver>
+    {
+        match (DeviceType::from((self.class_code, self.subclass_code)), self.prog_interface)
+        {
+            (DeviceType::SataController, 0x1) => match drivers::SataControllerAhci::init(self.clone())
+            {
+                Ok(driver) => Some(Driver::PciDriver(Box::new(driver))),
+                Err(e) => {
+                    error!("Failed to initialize driver : {}", e);
+                    None
+                }
+            }
+            _ => None
         }
     }
 }

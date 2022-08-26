@@ -1,73 +1,42 @@
-use alloc::boxed::Box;
 use alloc::vec::Vec;
-use ::aml::{AmlContext, AmlName, DebugVerbosity, NamespaceLevel};
-use acpi::{AcpiHandler, AcpiTables, PhysicalMapping};
-use log::{error, info};
+use ::aml::{AmlName, NamespaceLevel};
+use acpi::AcpiTables;
+use lazy_static::lazy_static;
+use log::{error, info, warn};
 pub use crate::acpi::acpi_device::AcpiDevice;
-use crate::acpi::aml::AmlHandler;
-use crate::acpi::handler::RcKernelAcpiHandler;
+pub use crate::acpi::aml::AML_CONTEXT;
 use crate::BOOT_INFO;
 use crate::device::Device;
-use crate::pci::PciHandler;
+use crate::pci::PCI_HANDLER;
+use spin::Mutex;
+use crate::acpi::handler::KernelAcpiHandler;
 
 mod handler;
 mod aml;
 mod acpi_device;
+mod acpi_driver;
 
-pub struct ACPI
+pub use acpi_driver::AcpiDriver;
+
+pub struct Acpi
 {
-    acpi_tables: AcpiTables<RcKernelAcpiHandler>,
-    pci_handler: Option<PciHandler>,
-    aml_context: AmlContext,
-    acpi_handler: RcKernelAcpiHandler,
+    pub acpi_tables: AcpiTables<KernelAcpiHandler>,
 }
 
-impl ACPI
+impl Acpi
 {
     pub unsafe fn new() -> Self
     {
-        let handler = RcKernelAcpiHandler::new();
+        let handler = KernelAcpiHandler;
         let rsdp_phys_addr = BOOT_INFO.rsdp_addr.into_option().unwrap();
 
-        let tables = AcpiTables::from_rsdp(handler.clone(), rsdp_phys_addr as usize).expect("Failed to initialize ACPI");
-
-        let mut acpi = match PciHandler::new(&tables)
-        {
-            Ok(pci) => {
-                ACPI {
-                    acpi_tables: tables,
-                    aml_context: AmlContext::new(
-                        Box::new(AmlHandler::new_with_pci(pci.clone())),
-                        DebugVerbosity::None),
-                    pci_handler: Some(pci),
-                    acpi_handler: handler,
-                }
-            },
-            Err(err) => {
-                error!("{:?}", err);
-                ACPI {
-                    acpi_tables: tables,
-                    aml_context: AmlContext::new(Box::new(AmlHandler::new()),DebugVerbosity::None),
-                    pci_handler: None,
-                    acpi_handler: handler,
-                }
-            }
+        let mut acpi = Acpi {
+            acpi_tables: AcpiTables::from_rsdp(handler, rsdp_phys_addr as usize).expect("Failed to initialize ACPI")
         };
 
-        if let Some(dsdt) = &acpi.acpi_tables.dsdt
-        {
-            info!("[AML] Parsing DSDT");
-            let phys_addr = dsdt.address;
-            let mapping: PhysicalMapping<RcKernelAcpiHandler, u8> = acpi.acpi_handler.map_physical_region(phys_addr, dsdt.length as usize);
-            acpi.aml_context.parse_table(core::slice::from_raw_parts(mapping.virtual_start().as_ptr(), dsdt.length as usize)).expect("[AML] Failed to parse DSDT");
-        }
-
-        for ssdt in &acpi.acpi_tables.ssdts
-        {
-            info!("[AML] Parsing SSDT");
-            let phys_addr = ssdt.address;
-            let mapping: PhysicalMapping<RcKernelAcpiHandler, u8> = acpi.acpi_handler.map_physical_region(phys_addr, ssdt.length as usize);
-            acpi.aml_context.parse_table(core::slice::from_raw_parts(mapping.virtual_start().as_ptr(), ssdt.length as usize)).expect("[AML] Failed to parse SSDT");
+        info!("Acpi Tables :");
+        for sdt in acpi.acpi_tables.sdts.iter() {
+            info!("{:#?}", sdt.0);
         }
 
         acpi
@@ -75,12 +44,20 @@ impl ACPI
 
     pub fn enumerate_devices(&mut self) -> Vec<Device>
     {
+        info!("[ACPI] Enumerating ACPI devices");
         let acpi_devices = self.enumerate_acpi_devices();
-        let pci_devices = match self.pci_handler.as_mut()
+        info!("[ACPI] Enumerated {} ACPI devices", acpi_devices.len());
+        info!("[ACPI] Enumerating PCI devices");
+        let pci_devices = match &mut *PCI_HANDLER.lock()
         {
             Some(pci) => pci.enumerate_devices(),
-            None => Vec::new()
+            None =>
+                {
+                    warn!("[ACPI] PCI handler not initialized, skipping PCI enumeration");
+                    Vec::new()
+                }
         };
+        info!("[ACPI] Enumerated {} PCI devices", pci_devices.len());
 
         let mut devices = Vec::with_capacity(acpi_devices.len() + pci_devices.len());
 
@@ -100,7 +77,7 @@ impl ACPI
     fn enumerate_acpi_devices(&mut self) -> Vec<AcpiDevice>
     {
         let mut hids_handle = Vec::new();
-        if let Err(e) = &self.aml_context.namespace.traverse(&mut |name: &AmlName, level: &NamespaceLevel|
+        if let Err(e) = &AML_CONTEXT.lock().namespace.traverse(&mut |name: &AmlName, level: &NamespaceLevel|
         {
             info!("[AML] Found ACPI Namespace: {} ({} objects)", name.as_string(), level.values.len());
 
@@ -116,18 +93,21 @@ impl ACPI
         })
         {
             error!("[AML] Failed to traverse namespace: {:?}", e);
-            Vec::new()
+            return Vec::new();
         }
-        else
-        {
-            Vec::from_iter(
-                hids_handle.iter().map(
-                    |hid| AcpiDevice::new(
-                        self.aml_context.namespace.get(*hid).unwrap().clone()
-                    )
-                ).into_iter()
-            )
-        }
+
+        Vec::from_iter(
+            hids_handle.iter().map(
+                |hid| AcpiDevice::new(
+                    AML_CONTEXT.lock().namespace.get(*hid).unwrap().clone()
+                )
+            ).into_iter()
+        )
     }
+}
+
+lazy_static!
+{
+    pub static ref ACPI: Mutex<Acpi> = Mutex::new(unsafe { Acpi::new() });
 }
 

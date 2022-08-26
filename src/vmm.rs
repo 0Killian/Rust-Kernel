@@ -4,8 +4,10 @@ use x86_64::structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, P
 use x86_64::structures::paging::mapper::{MapperFlush, MapToError, UnmapError};
 use crate::pmm::PMM;
 use lazy_static::lazy_static;
+use log::info;
 use spin::Mutex;
 use x86_64::structures::paging::page::PageRangeInclusive;
+use crate::allocator::{HEAP_SIZE, HEAP_START};
 use crate::BOOT_INFO;
 
 pub struct Vmm
@@ -18,6 +20,7 @@ pub enum MappingError
 {
     MapToError(MapToError<Size4KiB>),
     UnmapError(UnmapError),
+    NoFreePages
 }
 
 impl From<MapToError<Size4KiB>> for MappingError
@@ -95,28 +98,40 @@ impl Vmm
         Page::range_inclusive(page_start, page_end)
     }
 
-    pub fn map_region(&mut self, phys_addr: PhysAddr, virt_addr: VirtAddr, size: u64, flags: PageTableFlags) -> Result<(), MapToError<Size4KiB>>
+    pub fn map_region(&mut self, phys_addr: PhysAddr, size: u64, flags: PageTableFlags) -> Result<VirtAddr, MappingError>
     {
         let phys_addr_aligned = phys_addr.align_down(0x1000 as u64);
-        let virt_addr_aligned = virt_addr.align_down(0x1000 as u64);
+        let end_phys_addr_aligned = (phys_addr + size).align_up(0x1000 as u64);
+        let offset = phys_addr.as_u64() % 0x1000;
+        let page_count = (end_phys_addr_aligned - phys_addr_aligned) / 0x1000;
 
-        let phys_offset = phys_addr.as_u64() % 0x1000;
-        let virt_offset = virt_addr.as_u64() % 0x1000;
-
-        assert_eq!(phys_offset, virt_offset, "Physical and virtual addresses' offset from nearest page boundary must be equal");
-
-        let page_range = Self::range_inclusive(
-            virt_addr_aligned,
-            virt_addr_aligned + size + virt_offset - 1u64
-        );
-
-        for (i, page) in page_range.enumerate() {
-            unsafe {
-                self.mapper.map_to(page, PhysFrame::containing_address(phys_addr_aligned + i as u64 * 0x1000 + phys_offset), flags, PMM.lock().deref_mut())?.flush();
+        if let Some(virt_addr) = self.find_free_pages(
+            Page::containing_address(VirtAddr::new((HEAP_START + HEAP_SIZE) as u64)),
+            Page::containing_address(VirtAddr::new(u64::MAX)),
+            page_count as usize
+        )
+        {
+            for i in 0..page_count {
+                unsafe {
+                    match self.mapper.map_to(
+                        Page::containing_address(virt_addr + i * 0x1000),
+                        PhysFrame::containing_address(phys_addr_aligned + i * 0x1000),
+                        flags,
+                        PMM.lock().deref_mut()
+                    )
+                    {
+                        Ok(flush) => flush.flush(),
+                        Err(error) => return Err(MappingError::MapToError(error))
+                    };
+                }
             }
-        }
 
-        Ok(())
+            Ok(virt_addr + offset)
+        }
+        else
+        {
+            Err(MappingError::NoFreePages)
+        }
     }
 
     pub fn unmap_region(&mut self, virt_addr: VirtAddr, size: u64) -> Result<(), UnmapError>
@@ -169,6 +184,47 @@ impl Vmm
         }
 
         Ok(())
+    }
+
+    pub fn find_free_pages(&mut self, start_page: Page<Size4KiB>, end_page: Page<Size4KiB>, count: usize) -> Option<VirtAddr>
+    {
+        let page_range_inclusive = Page::range_inclusive(start_page, end_page);
+
+        let mut free_page = None;
+        let mut page_count = 0;
+
+        for page in page_range_inclusive
+        {
+            if self.translate_addr(page.start_address()).is_none()
+            {
+                if free_page.is_none()
+                {
+                    free_page = Some(page.start_address());
+                }
+
+                page_count += 1;
+                if count == page_count
+                {
+                    break;
+                }
+            }
+            else
+            {
+                if free_page.is_some()
+                {
+                    free_page = None;
+                }
+            }
+        }
+
+        if page_count == count
+        {
+            free_page
+        }
+        else
+        {
+            None
+        }
     }
 }
 

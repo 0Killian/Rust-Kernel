@@ -1,5 +1,7 @@
+use alloc::boxed::Box;
 use core::fmt::{Display, Formatter};
 use crate::acpi::AcpiDevice;
+use crate::drivers::Driver;
 use crate::pci::PciDevice;
 
 #[derive(Debug)]
@@ -17,6 +19,18 @@ impl Display for Device
         {
             Device::Acpi(device) => write!(f, "{}", device),
             Device::Pci(device) => write!(f, "{}", device)
+        }
+    }
+}
+
+impl Device
+{
+    pub fn find_driver(&self) -> Option<Driver>
+    {
+        match self
+        {
+            Device::Acpi(device) => device.find_driver(),
+            Device::Pci(device) => device.find_driver()
         }
     }
 }

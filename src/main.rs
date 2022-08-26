@@ -6,13 +6,15 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use log::{error, info};
-use crate::acpi::ACPI;
+use crate::acpi::{ACPI, AML_CONTEXT};
 use crate::interrupts::init_idt;
 use crate::vmm::VMM;
 use crate::logger::SERIAL_LOGGER;
+use crate::pci::PCI_HANDLER;
 
 mod serial;
 mod interrupts;
@@ -23,6 +25,7 @@ mod logger;
 mod pci;
 mod acpi;
 mod device;
+mod drivers;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> !
@@ -70,15 +73,33 @@ fn kernel_main(boot_info : &'static mut bootloader::BootInfo) -> !
     x86_64::instructions::interrupts::int3();
 
     allocator::init().expect("Heap initialization failed");
+    // Initialize AML context and PCI handler before locking ACPI
+    PCI_HANDLER.lock();
+    AML_CONTEXT.lock();
 
-    let mut acpi = unsafe { ACPI::new() };
+    let devices = ACPI.lock().enumerate_devices();
 
-    let devices = acpi.enumerate_devices();
+    let drivers = devices.iter().map(|device|
+        {
+            match device.find_driver()
+            {
+                Some(driver) => {
+                    info!("Found driver for {}", device);
+                    Some(driver)
+                }
+                None => {
+                    info!("No driver found for {}", device);
+                    None
+                }
+            }
+        });
 
-    info!("Found {} devices :", devices.len());
-    for device in devices.iter()
+    for driver in drivers
     {
-        info!("{}", device);
+        if let Some(driver) = driver
+        {
+            info!("Driver found : {:?}", driver);
+        }
     }
 
     info!("Kernel initialized");

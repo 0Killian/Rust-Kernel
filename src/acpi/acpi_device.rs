@@ -1,7 +1,9 @@
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use core::fmt::{Debug, Display, Error, Formatter};
 use aml::AmlValue;
+use crate::drivers::Driver;
 
 pub struct AcpiDevice
 {
@@ -30,6 +32,11 @@ impl AcpiDevice
                 // Revision ID
                 ((eisa_id_1 & 0xFF) as u8)
         )
+    }
+
+    pub fn find_driver(&self) -> Option<Driver>
+    {
+        None
     }
 }
 

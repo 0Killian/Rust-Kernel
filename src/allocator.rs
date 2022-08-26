@@ -5,7 +5,7 @@ use x86_64::VirtAddr;
 use crate::VMM;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 1 << 20; // 1MiB
+pub const HEAP_SIZE: usize = 1 << 20; // 1MiB 0b100000000000000000000
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
