@@ -3,20 +3,23 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use core::fmt::{Display, Formatter};
 use log::error;
-use pci_types::{Bar, BaseClass, DeviceId, EndpointHeader, Interface, PciAddress, PciHeader, SubClass, VendorId};
-use pci_types::device_type::DeviceType;
+
+use crate::pci::pci_header::PciHeader;
 use crate::drivers;
 use crate::drivers::Driver;
-use crate::pci::{PCI_HANDLER, PciDriver, PciHandler};
+use crate::pci::{PciDriver, PciHandler};
+use crate::pci::device_type::DeviceType;
+use crate::pci::pci_address::PciAddress;
+use crate::pci::pci_header::{ClassCode, DeviceId, ProgramInterface, SubClass, VendorId};
 
 #[derive(Debug, Clone)]
 pub struct PciDevice
 {
     vendor_id: VendorId,
     device_id: DeviceId,
-    class_code: BaseClass,
+    class_code: ClassCode,
     subclass_code: SubClass,
-    prog_interface: Interface,
+    prog_interface: ProgramInterface,
     address: PciAddress
 }
 
@@ -86,11 +89,6 @@ impl PciDevice
         }
     }
 
-    pub fn get_bar(&self, bar: u8) -> Option<Bar>
-    {
-        EndpointHeader::from_header(PciHeader::new(self.address), PCI_HANDLER.lock().as_ref().unwrap()).unwrap().bar(bar, PCI_HANDLER.lock().as_ref().unwrap())
-    }
-
     pub fn find_driver(&self) -> Option<Driver>
     {
         match (DeviceType::from((self.class_code, self.subclass_code)), self.prog_interface)
@@ -105,6 +103,18 @@ impl PciDevice
             }
             _ => None
         }
+    }
+
+    #[inline]
+    pub fn get_header(&self) -> PciHeader
+    {
+        PciHeader::new(self.address)
+    }
+
+    #[inline]
+    pub fn get_address(&self) -> PciAddress
+    {
+        self.address
     }
 }
 

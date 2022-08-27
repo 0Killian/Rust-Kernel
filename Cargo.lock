@@ -129,15 +129,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pci_types"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0543761ad4cb3a4aa1ad9d3082cb40253e69b2ec288dbd4bcb4492e8de6fb07"
-dependencies = [
- "bit_field",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -176,14 +167,15 @@ version = "0.1.0"
 dependencies = [
  "acpi",
  "aml",
+ "bit_field",
  "bitfield-struct",
  "bootloader",
  "lazy_static",
  "linked_list_allocator",
  "log",
- "pci_types",
  "spin 0.9.4",
  "uart_16550",
+ "volatile",
  "x86_64",
 ]
 

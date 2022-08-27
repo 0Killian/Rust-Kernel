@@ -1,9 +1,8 @@
 use aml::Handler;
 use lazy_static::lazy_static;
-use pci_types::{PciAddress};
 use x86_64::{PhysAddr, VirtAddr};
 use x86_64::structures::paging::{Page, PageTableFlags};
-use crate::pci::PciHandler;
+use crate::pci::{PciAddress, PciHandler};
 use crate::VMM;
 use log::info;
 use ::aml::{AmlContext, DebugVerbosity};

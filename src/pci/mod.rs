@@ -1,19 +1,28 @@
 mod pci_pci_bridge;
 mod pci_device;
 mod pci_driver;
+mod pci_address;
+mod pci_header;
+mod status_register;
+mod bar;
+mod device_type;
 
 use alloc::vec::Vec;
 use acpi::{AcpiError, AcpiHandler, AcpiTables, PciConfigRegions};
 use lazy_static::lazy_static;
-use pci_types::{ConfigRegionAccess, PciAddress, PciHeader};
 use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::{PhysAddr, VirtAddr};
-pub use crate::pci::pci_device::PciDevice;
-use crate::VMM;
 use spin::Mutex;
-use crate::acpi::ACPI;
 use log::{error, info};
+
+use crate::VMM;
+use crate::acpi::ACPI;
+
+pub use crate::pci::pci_address::PciAddress;
 pub use crate::pci::pci_driver::PciDriver;
+pub use crate::pci::pci_device::PciDevice;
+pub use crate::pci::pci_header::{PciHeader, StandardHeader, BistError};
+pub use crate::pci::bar::Bar;
 
 #[derive(Clone)]
 pub struct PciHandler
@@ -22,49 +31,12 @@ pub struct PciHandler
     page: VirtAddr
 }
 
-impl ConfigRegionAccess for PciHandler
-{
-    fn function_exists(&self, address: PciAddress) -> bool {
-        self.pci_config_regions.physical_address(address.segment(), address.bus(), address.device(), address.function())
-            .is_some()
-    }
-
-    unsafe fn read(&self, address: PciAddress, offset: u16) -> u32
-    {
-        let physical_address = self.pci_config_regions.physical_address(address.segment(), address.bus(), address.device(), address.function())
-            .unwrap();
-
-        let _offset = physical_address % 0x1000;
-
-        VMM.lock().remap_region(PhysAddr::new(physical_address), self.page + _offset, (offset + 3) as u64, PageTableFlags::PRESENT | PageTableFlags::WRITABLE).expect("[PCI] Failed to remap PCI region");
-
-        let ptr = (self.page.as_u64() + offset as u64 + _offset) as *mut u32;
-        ptr.read_volatile()
-    }
-
-    unsafe fn write(&self, address: PciAddress, offset: u16, value: u32) {
-        let physical_address = self.pci_config_regions.physical_address(address.segment(), address.bus(), address.device(), address.function())
-            .unwrap();
-
-        let _offset = physical_address % 0x1000;
-
-        VMM.lock().remap_region(PhysAddr::new(physical_address), self.page + _offset, (offset + 3) as u64, PageTableFlags::PRESENT | PageTableFlags::WRITABLE).expect("[PCI] Failed to remap PCI region");
-
-        let ptr = (self.page.as_u64() + _offset + offset as u64) as *mut u32;
-        ptr.write_volatile(value);
-    }
-}
-
 impl PciHandler
 {
     pub fn new<T>(acpi_tables: &AcpiTables<T>) -> Result<PciHandler, AcpiError> where T: AcpiHandler
     {
-        info!("Acpi Tables :");
-        for sdt in acpi_tables.sdts.iter() {
-            info!("{:#?}", sdt.0);
-        }
-
-        match PciConfigRegions::new(acpi_tables) {
+        match PciConfigRegions::new(acpi_tables)
+        {
             Ok(regions) => Ok(PciHandler {
                 pci_config_regions: regions,
                 page: VMM.lock().map_region(
@@ -135,12 +107,33 @@ impl PciHandler
 
     pub unsafe fn read(&self, address: PciAddress, offset: u16) -> u32
     {
-        ConfigRegionAccess::read(self, address, offset)
+        let physical_address = self.pci_config_regions.physical_address(address.segment(), address.bus(), address.device(), address.function())
+            .unwrap();
+
+        let _offset = physical_address % 0x1000;
+
+        VMM.lock().remap_region(PhysAddr::new(physical_address), self.page + _offset, (offset + 3) as u64, PageTableFlags::PRESENT | PageTableFlags::WRITABLE).expect("[PCI] Failed to remap PCI region");
+
+        let ptr = (self.page.as_u64() + offset as u64 + _offset) as *mut u32;
+        ptr.read_volatile()
     }
 
     pub unsafe fn write(&self, address: PciAddress, offset: u16, value: u32)
     {
-        ConfigRegionAccess::write(self,address, offset, value)
+        let physical_address = self.pci_config_regions.physical_address(address.segment(), address.bus(), address.device(), address.function())
+            .unwrap();
+
+        let _offset = physical_address % 0x1000;
+
+        VMM.lock().remap_region(PhysAddr::new(physical_address), self.page + _offset, (offset + 3) as u64, PageTableFlags::PRESENT | PageTableFlags::WRITABLE).expect("[PCI] Failed to remap PCI region");
+
+        let ptr = (self.page.as_u64() + _offset + offset as u64) as *mut u32;
+        ptr.write_volatile(value);
+    }
+
+    pub fn function_exists(&self, address: PciAddress) -> bool
+    {
+        self.pci_config_regions.physical_address(address.segment(), address.bus(), address.device(), address.function()).is_some()
     }
 }
 
